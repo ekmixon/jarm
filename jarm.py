@@ -117,21 +117,18 @@ def cipher_mung(ciphers, request):
     #Ciphers backward
     if (request == "REVERSE"):
         output = ciphers[::-1]
-    #Bottom half of ciphers
-    elif (request == "BOTTOM_HALF"):
+    elif request == "BOTTOM_HALF":
         if (cipher_len % 2 == 1):
-            output = ciphers[int(cipher_len/2)+1:]
+            output = ciphers[cipher_len // 2 + 1:]
         else:
-            output = ciphers[int(cipher_len/2):]
-    #Top half of ciphers in reverse order
-    elif (request == "TOP_HALF"):
+            output = ciphers[cipher_len // 2:]
+    elif request == "TOP_HALF":
         if (cipher_len % 2 == 1):
-            output.append(ciphers[int(cipher_len/2)])
-            #Top half gets the middle cipher
+            output.append(ciphers[cipher_len // 2])
+                    #Top half gets the middle cipher
         output += cipher_mung(cipher_mung(ciphers, "REVERSE"),"BOTTOM_HALF")
-    #Middle-out cipher order
-    elif (request == "MIDDLE_OUT"):
-        middle = int(cipher_len/2)
+    elif request == "MIDDLE_OUT":
+        middle = cipher_len // 2
         # if ciphers are uneven, start with the center.  Second half before first half
         if (cipher_len % 2 == 1):
             output.append(ciphers[middle])
@@ -255,10 +252,7 @@ def supported_versions(jarm_details, grease):
     #Assemble the extension
     ext = b"\x00\x2b"
     #Add GREASE if applicable
-    if grease == True:
-        versions = choose_grease()
-    else:
-        versions = b""
+    versions = choose_grease() if grease == True else b""
     for version in tls:
         versions += version
     second_length = len(versions)
@@ -273,7 +267,10 @@ def send_packet(packet):
     try:
         #Determine if the input is an IP or domain name
         try:
-            if (type(ipaddress.ip_address(destination_host)) == ipaddress.IPv4Address) or (type(ipaddress.ip_address(destination_host)) == ipaddress.IPv6Address):
+            if type(ipaddress.ip_address(destination_host)) in [
+                ipaddress.IPv4Address,
+                ipaddress.IPv6Address,
+            ]:
                 raw_ip = True
                 ip = (destination_host, destination_port)
         except ValueError as e:
@@ -299,7 +296,7 @@ def send_packet(packet):
             sock.settimeout(20)
             sock.connect((destination_host, destination_port))
         #Resolve IP if given a domain name
-        if raw_ip == False:
+        if not raw_ip:
             ip = sock.getpeername()
         sock.sendall(packet)
         #Receive server hello
@@ -308,7 +305,6 @@ def send_packet(packet):
         sock.shutdown(socket.SHUT_RDWR)
         sock.close()
         return bytearray(data), ip[0]
-    #Timeout errors result in an empty hash
     except socket.timeout as e:
         sock.close()
         return "TIMEOUT", ip[0]
@@ -319,7 +315,7 @@ def send_packet(packet):
 #If a packet is received, decipher the details
 def read_packet(data, jarm_details):
     try:
-        if data == None:
+        if data is None:
             return "|||"
         jarm = ""
         #Server hello error
@@ -374,10 +370,9 @@ def extract_extension_info(data, counter, server_hello_length):
             else:
                 values.append(data[count+4:count+4+ext_length])
                 count += ext_length+4
-        result = ""
         #Read application_layer_protocol_negotiation
         alpn = find_extension(b"\x00\x10", types, values)
-        result += str(alpn)
+        result = "" + str(alpn)
         result += "|"
         #Add formating hyphens
         add_hyphen = 0
@@ -389,7 +384,6 @@ def extract_extension_info(data, counter, server_hello_length):
             else:
                 result += "-"
         return result
-    #Error handling
     except IndexError as e:
         result = "|"
         return result
@@ -427,7 +421,7 @@ def jarm_hash(jarm_raw):
         alpns_and_ext += components[3]
     #Custom jarm hash has the sha256 of alpns and extensions added to the end
     sha256 = (hashlib.sha256(alpns_and_ext.encode())).hexdigest()
-    fuzzy_hash += sha256[0:32]
+    fuzzy_hash += sha256[:32]
     return fuzzy_hash
 
 #Fuzzy hash for ciphers is the index number (in hex) of the cipher in the list
@@ -441,13 +435,8 @@ def cipher_bytes(cipher):
         if cipher == strtype_bytes:
             break
         count += 1
-    hexvalue = str(hex(count))[2:]
-    #This part must always be two bytes
-    if len(hexvalue) < 2:
-        return_bytes = "0" + hexvalue
-    else:
-        return_bytes = hexvalue
-    return return_bytes
+    hexvalue = hex(count)[2:]
+    return f"0{hexvalue}" if len(hexvalue) < 2 else hexvalue
 
 #This captures a single version byte based on version
 def version_byte(version):
@@ -455,14 +444,10 @@ def version_byte(version):
         return "0"
     options = "abcdef"
     count = int(version[3:4])
-    byte = options[count]
-    return byte
+    return options[count]
 
 def ParseNumber(number):
-    if number.startswith('0x'):
-        return int(number[2:], 16)
-    else:
-        return int(number)
+    return int(number[2:], 16) if number.startswith('0x') else int(number)
 
 def main():
     #Select the packets and formats to send
@@ -505,51 +490,46 @@ def main():
     result = jarm_hash(jarm)
     #Write to file
     if args.output:
-        if ip != None:
+        if ip is None:
+            file.write(f"{destination_host},Failed to resolve IP,{result}")
+        else:
             if args.json:
                 file.write('{"host":"' + destination_host + '","ip":"' + ip + '","result":"' + result + '"')
             else:
-                file.write(destination_host + "," + ip + "," + result)
-        else:
-            file.write(destination_host + ",Failed to resolve IP," + result)
-        #Verbose mode adds pre-fuzzy-hashed JARM
+                file.write(f"{destination_host},{ip},{result}")
         if args.verbose:
             if args.json:
                 file.write(',"jarm":"' + jarm + '"')
             else:
-                file.write("," + jarm)
+                file.write(f",{jarm}")
         if args.json:
             file.write("}")
         file.write("\n")
-    #Print to STDOUT
     else:
         if ip != None:
             if args.json:
                 sys.stdout.write('{"host":"' + destination_host + '","ip":"' + ip + '","result":"' + result + '"')
             else:
-                print("Domain: " + destination_host)
-                print("Resolved IP: " + ip)
-                print("JARM: " + result)
+                print(f"Domain: {destination_host}")
+                print(f"Resolved IP: {ip}")
+                print(f"JARM: {result}")
         else:
             if args.json:
                 sys.stdout.write('{"host":"' + destination_host + '","ip":null,"result":"' + result + '"')
             else:
-                print("Domain: " + destination_host)
+                print(f"Domain: {destination_host}")
                 print("Resolved IP: IP failed to resolve.")
-                print("JARM: " + result)
-        #Verbose mode adds pre-fuzzy-hashed JARM
+                print(f"JARM: {result}")
         if args.verbose:
             if args.json:
                 sys.stdout.write(',"jarm":"' + jarm + '"')
             else:
-                scan_count = 1
-                for round in jarm.split(","):
-                    print("Scan " + str(scan_count) + ": " + round, end="")
+                for scan_count, round in enumerate(jarm.split(","), start=1):
+                    print(f"Scan {str(scan_count)}: {round}", end="")
                     if scan_count == len(jarm.split(",")):
                         print("\n",end="")
                     else:
                         print(",")
-                    scan_count += 1
         if args.json:
             sys.stdout.write("}\n")
 
@@ -566,27 +546,22 @@ if args.proxy:
 
 #Set destination host and port
 destination_host = args.scan
-if args.port:
-    destination_port = int(args.port)
-else:
-    destination_port = 443
+destination_port = int(args.port) if args.port else 443
 #JSON output
-if args.json:
-    file_ext = ".json"
-else:
-    file_ext = ".csv"
+file_ext = ".json" if args.json else ".csv"
 #File output option
 if args.output:
     if args.json:
-        if args.output[-5:] != file_ext:
-            output_file = args.output + file_ext
-        else:
-            output_file = args.output
+        output_file = (
+            args.output + file_ext
+            if args.output[-5:] != file_ext
+            else args.output
+        )
+
+    elif args.output[-4:] != file_ext:
+        output_file = args.output + file_ext
     else:
-        if args.output[-4:] != file_ext:
-            output_file = args.output + file_ext
-        else:
-            output_file = args.output
+        output_file = args.output
     file = open(output_file, "a+")
 if args.input:
     input_file = open(args.input, "r")
